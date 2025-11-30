@@ -1,12 +1,14 @@
 import supervisely as sly
 from supervisely.app.widgets import (
     SelectWorkspace,
-    Select,
-    ClassesListSelector,
+    SelectUser,
+    SelectClass,
     Container,
     Widget,
     Card,
     Stepper,
+    Button,
+    Text,
 )
 from typing import Optional
 from supervisely.app.singleton import Singleton
@@ -29,9 +31,16 @@ class WorkflowStep:
     def _add_content(self) -> None:
 
         self.workspace_selector = SelectWorkspace()
-        self.class_selector = ClassesListSelector(multiple=True)
-        self.reviewer_selector = Select([], multiple=True)
-        self.labler_selector = Select([], multiple=True)
+        self.class_selector = SelectClass(multiple=True)
+        self.reviewer_selector = SelectUser(
+            roles=["annotator", "reviewer", "manager"], multiple=True
+        )
+        self.labler_selector = SelectUser(
+            roles=["annotator", "reviewer"], multiple=True
+        )
+
+        self.confirm_button = Button("Confirm Selection")
+        self.summary_text = Text("REPLACE ME")
 
         self._content = Container(
             widgets=[
@@ -39,6 +48,8 @@ class WorkflowStep:
                 self.class_selector,
                 self.reviewer_selector,
                 self.labler_selector,
+                self.summary_text,
+                self.confirm_button,
             ],
             # direction="horizontal",
         )
@@ -63,7 +74,8 @@ class Workflow(metaclass=Singleton):
             active_step=1,
         )
         self._layout = Card(
-            title="Multi-Team Labeling Workflow", content=Container(widgets=[stepper])
+            title="Multi-Team Labeling Workflow",
+            content=Container(widgets=[stepper]),
         )
 
     def get_layout(self):

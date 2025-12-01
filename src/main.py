@@ -14,7 +14,7 @@ import supervisely as sly
 # app = sly.Application(layout=layout, static_dir=g.STATIC_DIR)
 import src.globals as g
 
-from src.content import Workflow
+from src.content import Workflow, settings_card
 
 # Workflow()
 layout = Workflow().get_layout()

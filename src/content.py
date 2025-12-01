@@ -9,13 +9,27 @@ from supervisely.app.widgets import (
     Stepper,
     Button,
     Text,
+    SelectProject,
+    SelectDataset,
 )
+import src.globals as g
 from typing import Optional, Dict
 from supervisely.app.singleton import Singleton
 from supervisely.api.user_api import UserInfo
 
-ACTIVE_STEPS = [1]
 DEBUG_NUMBER_OF_TEAMS = 8
+
+select_project = SelectProject(
+    default_id=g.PROJECT_ID, workspace_id=g.WORKSPACE_ID, compact=True
+)
+select_dataset = SelectDataset(
+    default_id=g.DATASET_ID, project_id=g.PROJECT_ID, compact=True
+)
+select_dataset_button = Button("Load Dataset")
+settings_card = Card(
+    title="Settings",
+    content=Container(widgets=[select_project, select_dataset, select_dataset_button]),
+)
 
 
 class WorkflowStep:
@@ -28,7 +42,8 @@ class WorkflowStep:
         self.project_id: Optional[int] = None
         self.dataset_id: Optional[int] = None
         self._content: Optional[Widget] = None
-        self._active = self.step_number in ACTIVE_STEPS
+        self._active = False
+        self._completed = False
         self._add_content()
 
     def _add_content(self) -> None:
@@ -46,25 +61,55 @@ class WorkflowStep:
         if not self.active:
             self.confirm_button.disable()
 
+        self._update_button_text()
+
         self.summary_text = Text()
 
         @self.confirm_button.click
         def validate_on_click():
             res = self.validate_inputs()
             if res:
-                next_step = self.step_number + 1
-                sly.logger.info(
-                    f"Workflow Step {self.step_number} validated successfully. "
-                    f"Proceeding to Step {next_step}."
-                )
-                # self.active = False # TODO: Replace text button.
-                Workflow().set_active_step(next_step)
+                if not self._completed:
+                    # First time confirming - mark as completed and move to next step
+                    self._completed = True
+                    self._update_button_text()
+                    next_step = self.step_number + 1
+                    sly.logger.info(
+                        f"Workflow Step {self.step_number} validated successfully. "
+                        f"Proceeding to Step {next_step}."
+                    )
+                    Workflow().set_active_step(next_step)
+                else:
+                    # Already completed - this is a change, just show success
+                    sly.logger.info(f"Step {self.step_number} selection updated.")
 
         @self.workspace_selector.value_changed
-        def on_workspace_change(workspace_id: int):
+        def on_selection_change(workspace_id: int):
+            # When user changes selection, reset completed status
+            if self._completed:
+                self._completed = False
+                self._update_button_text()
             team_id = self.workspace_selector.get_team_id()
             self.reviewer_selector.set_team_id(team_id)
             self.labeler_selector.set_team_id(team_id)
+
+        @self.class_selector.value_changed
+        def on_class_change(selected_classes):
+            if self._completed:
+                self._completed = False
+                self._update_button_text()
+
+        @self.reviewer_selector.value_changed
+        def on_reviewer_change(selected_users):
+            if self._completed:
+                self._completed = False
+                self._update_button_text()
+
+        @self.labeler_selector.value_changed
+        def on_labeler_change(selected_users):
+            if self._completed:
+                self._completed = False
+                self._update_button_text()
 
         self._content = Container(
             widgets=[
@@ -101,6 +146,13 @@ class WorkflowStep:
             sly.logger.info(f"Workflow Step {self.step_number} is now active.")
         else:
             self.confirm_button.disable()
+
+    def _update_button_text(self) -> None:
+        """Update button text based on completion status."""
+        if self._completed:
+            self.confirm_button.text = "Change Selection"
+        else:
+            self.confirm_button.text = "Confirm Selection"
 
     def validate_inputs(self) -> bool:
         """Validate all required inputs and display appropriate feedback.
@@ -203,7 +255,7 @@ class Workflow(metaclass=Singleton):
         )
 
     def get_layout(self):
-        return self._layout
+        return Container(widgets=[settings_card, self._layout])
 
     def set_active_step(self, step_number: int) -> None:
         """Set the active step in the workflow stepper.
@@ -215,5 +267,19 @@ class Workflow(metaclass=Singleton):
             sly.logger.warning(f"Step number {step_number} is out of range.")
             return None
         sly.logger.info(f"Setting active workflow step to: {step_number}")
+
+        # Mark all previous steps as completed and update their button text
+        for prev_step_num in range(1, step_number):
+            if prev_step_num in self.steps:
+                prev_step = self.steps[prev_step_num]
+                if not prev_step._completed:
+                    prev_step._completed = True
+                    prev_step._update_button_text()
+
         self.stepper.set_active_step(step_number)
         self.steps[step_number].active = True
+
+
+@select_dataset_button.click
+def load_dataset():
+    Workflow().steps[1].active = True

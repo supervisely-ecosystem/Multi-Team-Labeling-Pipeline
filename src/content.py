@@ -123,7 +123,7 @@ class WorkflowStep:
         self.team_id: Optional[int] = None
         self.project_id: Optional[int] = None
         self.dataset_id: Optional[int] = None
-        self._content: Optional[Widget] = None
+        self._content: Optional[Card] = None
         self._add_content()
 
     def to_json(self) -> Dict[str, Any]:

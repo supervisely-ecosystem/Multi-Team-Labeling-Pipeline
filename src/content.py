@@ -14,6 +14,7 @@ from supervisely.app.widgets import (
     SelectDataset,
     Field,
     Flexbox,
+    Empty,
 )
 import src.globals as g
 from typing import Optional, Dict, Any
@@ -202,8 +203,9 @@ class WorkflowStep:
 
     def _add_content(self) -> None:
         self.team_selector = SelectTeam(show_label=False)
+        team_with_empty = Container(widgets=[Empty(), self.team_selector])
         team_field = Field(
-            self.team_selector,
+            team_with_empty,
             title="Team",
         )
         self.workspace_selector = SelectWorkspace(compact=True, show_label=False)

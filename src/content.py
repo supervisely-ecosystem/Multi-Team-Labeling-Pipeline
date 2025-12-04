@@ -129,6 +129,22 @@ class WorkflowStep:
         self._content: Optional[Card] = None
         self._add_content()
 
+    def is_filled(self) -> bool:
+        # TODO: Refactor me
+        if not self.team_selector.get_selected_id():
+            return False
+        if not self.workspace_selector.get_selected_id():
+            return False
+        if not self.class_selector.get_selected_class():
+            return False
+        if not self.tag_selector.get_selected_tag():
+            return False
+        if not self.reviewer_selector.get_selected_user():
+            return False
+        if not self.labeler_selector.get_selected_user():
+            return False
+        return True
+
     def to_json(self) -> Dict[str, Any]:
         selected_classes = self.class_selector.get_selected_class() or []
         classes_json = [sly_class.to_json() for sly_class in selected_classes]
@@ -254,27 +270,43 @@ class WorkflowStep:
             [reviewer_field, labeler_field],
         )
 
-        self.summary_text = Text()
+        @self.team_selector.value_changed
+        def on_team_change(team_id: int):
+            self.team_id = team_id
+            self.workspace_selector.set_team_id(team_id)
+            self.reviewer_selector.set_team_id(team_id)
+            self.labeler_selector.set_team_id(team_id)
+            Workflow().all_steps_filled()
 
         @self.workspace_selector.value_changed
         def on_selection_change(workspace_id: int):
-            team_id = self.workspace_selector.get_team_id()
-            self.reviewer_selector.set_team_id(team_id)
-            self.labeler_selector.set_team_id(team_id)
-
-            self.team_id = team_id
             self.workspace_id = workspace_id
             sly.logger.info(
-                f"Workflow Step {self.step_number} - "
-                f"Selected Team ID: {team_id}, Workspace ID: {workspace_id}"
+                f"Workflow Step {self.step_number} - Workspace ID: {workspace_id}"
             )
+            Workflow().all_steps_filled()
+
+        checkable_widgets = [
+            self.class_selector,
+            self.tag_selector,
+            self.reviewer_selector,
+            self.labeler_selector,
+        ]
+
+        for widget in checkable_widgets:
+
+            @widget.value_changed
+            def on_value_change(*args):
+                sly.logger.info(
+                    f"Workflow Step {self.step_number} - Widget '{widget}' value changed."
+                )
+                Workflow().all_steps_filled()
 
         content = Container(
             widgets=[
                 team_workspace_flexbox,
                 users_container,
                 class_tag_flexbox,
-                self.summary_text,
             ],
         )
 
@@ -282,81 +314,6 @@ class WorkflowStep:
             title=f"Workflow step for Team {self.step_number}",
             content=content,
         )
-
-    def validate_inputs(self) -> bool:
-        """Validate all required inputs and display appropriate feedback.
-
-        :return: True if all inputs are valid, False otherwise.
-        :rtype: bool
-        """
-        self.summary_text.text = ""
-        errors = []
-
-        # Validate workspace selection
-        workspace_id = self.workspace_selector.get_selected_id()
-        sly.logger.debug(f"Validating workspace ID: {workspace_id}")
-        if not workspace_id:
-            errors.append("Workspace is not selected")
-
-        # Validate class selection
-        selected_classes = self.class_selector.get_selected_class()
-        sly.logger.debug(f"Selected classes: {[cls.name for cls in selected_classes]}")
-        if not selected_classes:
-            errors.append("At least one class must be selected")
-
-        # Validate reviewer selection
-        selected_reviewers = self.reviewer_selector.get_selected_user()
-        sly.logger.debug(
-            f"Selected reviewers: {[user.login for user in selected_reviewers]}"
-        )
-        if not selected_reviewers:
-            errors.append("At least one reviewer must be selected")
-
-        # Validate labeler selection
-        selected_labelers = self.labeler_selector.get_selected_user()
-        sly.logger.debug(
-            f"Selected labelers: {[user.login for user in selected_labelers]}"
-        )
-        if not selected_labelers:
-            errors.append("At least one labeler must be selected")
-
-        # Display validation results
-        if errors:
-            self.summary_text.text = ". ".join(errors) + "."
-            self.summary_text.status = "error"
-            return False
-
-        summary = (
-            f"Selected classes: {self.class_names_to_str(selected_classes)} | "
-            f"Assigned reviewers: {self.user_logins_to_str(selected_reviewers)} | "
-            f"Assigned labelers: {self.user_logins_to_str(selected_labelers)}"
-        )
-
-        self.summary_text.text = summary
-        self.summary_text.status = "success"
-        return True
-
-    @staticmethod
-    def user_logins_to_str(user_list: list[UserInfo]) -> str:
-        """Convert a list of UserInfo objects to a comma-separated string of user logins.
-
-        :param user_list: List of UserInfo objects.
-        :type user_list: list[UserInfo]
-        :return: Comma-separated string of user logins.
-        :rtype: str
-        """
-        return ", ".join([user.login for user in user_list])
-
-    @staticmethod
-    def class_names_to_str(class_list: list[sly.ObjClass]) -> str:
-        """Convert a list of ObjClass objects to a comma-separated string of class names.
-
-        :param class_list: List of ObjClass objects.
-        :type class_list: list[sly.ObjClass]
-        :return: Comma-separated string of class names.
-        :rtype: str
-        """
-        return ", ".join([cls.name for cls in class_list])
 
     @property
     def content(self) -> Optional[Card]:
@@ -376,6 +333,16 @@ class Workflow(metaclass=Singleton):
         self._layout = Container(
             widgets=widgets,
         )
+
+    def all_steps_filled(self) -> bool:
+        for step_number, workflow_step in self.steps.items():
+            if not workflow_step.is_filled():
+                sly.logger.info(f"Workflow Step {step_number} is not fully filled.")
+                launch_workflow_button.disable()
+                return False
+        sly.logger.info("All workflow steps are fully filled.")
+        launch_workflow_button.enable()
+        return True
 
     def to_json(self) -> Dict[int, Dict[str, Any]]:
         data = {}

@@ -6,11 +6,12 @@ from supervisely.app.widgets import (
     Container,
     Widget,
     Card,
-    Stepper,
     Button,
     Text,
     SelectProject,
     SelectDataset,
+    Field,
+    Flexbox,
 )
 import src.globals as g
 from typing import Optional, Dict, Any
@@ -28,15 +29,40 @@ select_dataset = SelectDataset(
 if g.DATASET_ID:
     sly.logger.info(f"Setting selected dataset ID: {g.DATASET_ID}")
     select_dataset.set_dataset_id(g.DATASET_ID)
-select_dataset_button = Button("Load Dataset")
 
-save_workflow_button = Button("Save Workflow")
-save_workflow_button.disable()
+save_workflow_button = Button(
+    "",
+    icon="zmdi zmdi-save",
+    icon_gap=0,
+    button_size="large",
+)
+reset_workflow_button = Button(
+    "",
+    icon="zmdi zmdi-close",
+    icon_gap=0,
+    button_type="info",
+    # button_size="large",
+    plain=True,
+)
+launch_workflow_button = Button(
+    "Launch Workflow",
+    button_type="success",
+    # button_size="large",
+    icon="zmdi zmdi-play",
+    icon_gap=10,
+)
+launch_workflow_button.disable()
+
+buttons_flexbox = Flexbox(
+    widgets=[reset_workflow_button, save_workflow_button, launch_workflow_button],
+    gap=0,
+)
 
 settings_card = Card(
     title="Settings",
-    content=Container(widgets=[select_project, select_dataset, select_dataset_button]),
-    content_top_right=save_workflow_button,
+    description="Select the project and dataset to configure the multi-team labeling workflow.",
+    content=Container(widgets=[select_project, select_dataset]),
+    content_top_right=buttons_flexbox,
 )
 
 
@@ -98,7 +124,6 @@ class WorkflowStep:
         self.project_id: Optional[int] = None
         self.dataset_id: Optional[int] = None
         self._content: Optional[Widget] = None
-        self._active = False
         self._add_content()
 
     def to_json(self) -> Dict[str, Any]:
@@ -144,31 +169,34 @@ class WorkflowStep:
 
     def _add_content(self) -> None:
         self.workspace_selector = SelectWorkspace()
+
         self.class_selector = SelectClass(multiple=True)
+        class_field = Field(
+            self.class_selector,
+            title="Classes",
+        )
+
         self.reviewer_selector = SelectUser(
             roles=["annotator", "reviewer", "manager"], multiple=True
         )
+        reviewer_field = Field(
+            self.reviewer_selector,
+            title="Reviewers",
+        )
+
         self.labeler_selector = SelectUser(
             roles=["annotator", "reviewer"], multiple=True
         )
+        labeler_field = Field(
+            self.labeler_selector,
+            title="Labelers",
+        )
 
-        self.confirm_button = Button("Confirm Selection")
-        if not self.active:
-            self.confirm_button.disable()
+        users_container = Flexbox(
+            [reviewer_field, labeler_field],
+        )
 
         self.summary_text = Text()
-
-        @self.confirm_button.click
-        def validate_on_click():
-            res = self.validate_inputs()
-            if res:
-                next_step = self.step_number + 1
-                sly.logger.info(
-                    f"Workflow Step {self.step_number} validated successfully. "
-                    f"Proceeding to Step {next_step}."
-                )
-                Workflow().set_active_step(next_step)
-                # TODO: Disable card content after confirmation.
 
         @self.workspace_selector.value_changed
         def on_selection_change(workspace_id: int):
@@ -183,40 +211,19 @@ class WorkflowStep:
                 f"Selected Team ID: {team_id}, Workspace ID: {workspace_id}"
             )
 
-        self._content = Container(
+        content = Container(
             widgets=[
                 self.workspace_selector,
-                self.class_selector,
-                self.reviewer_selector,
-                self.labeler_selector,
+                users_container,
+                class_field,
                 self.summary_text,
-                self.confirm_button,
             ],
-            # direction="horizontal",
         )
 
-    @property
-    def active(self) -> bool:
-        """Check if the workflow step is active.
-
-        :return: True if the step is active, False otherwise.
-        :rtype: bool
-        """
-        return self._active
-
-    @active.setter
-    def active(self, value: bool) -> None:
-        """Set the active status of the workflow step.
-
-        :param value: True to activate the step, False to deactivate.
-        :type value: bool
-        """
-        self._active = value
-        if value:
-            self.confirm_button.enable()
-            sly.logger.info(f"Workflow Step {self.step_number} is now active.")
-        else:
-            self.confirm_button.disable()
+        self._content = Card(
+            title=f"Workflow step for Team {self.step_number}",
+            content=content,
+        )
 
     def validate_inputs(self) -> bool:
         """Validate all required inputs and display appropriate feedback.
@@ -294,28 +301,22 @@ class WorkflowStep:
         return ", ".join([cls.name for cls in class_list])
 
     @property
-    def content(self) -> Optional[Widget]:
+    def content(self) -> Optional[Card]:
         return self._content
 
 
 class Workflow(metaclass=Singleton):
     def __init__(self):
         self.steps: Dict[int, WorkflowStep] = {}
-        widgets: list[Widget] = []
+        widgets: list[Card] = []
         for step_number in range(1, g.NUMBER_OF_TEAMS + 1):
             workflow_step = WorkflowStep(step_number)
             self.steps[step_number] = workflow_step
             if workflow_step.content:
                 widgets.append(workflow_step.content)
 
-        self.stepper = Stepper(
-            titles=[f"Team {i}" for i in range(1, g.NUMBER_OF_TEAMS + 1)],
+        self._layout = Container(
             widgets=widgets,
-            active_step=1,
-        )
-        self._layout = Card(
-            title="Multi-Team Labeling Workflow",
-            content=Container(widgets=[self.stepper]),
         )
 
     def to_json(self) -> Dict[int, Dict[str, Any]]:
@@ -334,24 +335,3 @@ class Workflow(metaclass=Singleton):
 
     def get_layout(self):
         return Container(widgets=[settings_card, self._layout])
-
-    def set_active_step(self, step_number: int) -> None:
-        """Set the active step in the workflow stepper.
-
-        :param step_number: The step number to set as active.
-        :type step_number: int
-        """
-        if step_number == g.NUMBER_OF_TEAMS:
-            save_workflow_button.enable()
-        if step_number < 1 or step_number > g.NUMBER_OF_TEAMS:
-            sly.logger.warning(f"Step number {step_number} is out of range.")
-            return None
-        sly.logger.info(f"Setting active workflow step to: {step_number}")
-
-        self.stepper.set_active_step(step_number)
-        self.steps[step_number].active = True
-
-
-@select_dataset_button.click
-def load_dataset():
-    Workflow().steps[1].active = True

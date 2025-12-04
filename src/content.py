@@ -131,15 +131,21 @@ class WorkflowStep:
     def to_json(self) -> Dict[str, Any]:
         selected_classes = self.class_selector.get_selected_class() or []
         classes_json = [sly_class.to_json() for sly_class in selected_classes]
+
+        selected_tags = self.tag_selector.get_selected_tag() or []
+        tags_json = [tag.to_json() for tag in selected_tags]
+
         reviewer_ids = [user.id for user in self.reviewer_selector.get_selected_user()]
         labeler_ids = [user.id for user in self.labeler_selector.get_selected_user()]
+
         data = {
             "step_number": self.step_number,
-            "team_id": self.team_id,
-            "workspace_id": self.workspace_id,
+            "team_id": self.team_selector.get_selected_id(),
+            "workspace_id": self.workspace_selector.get_selected_id(),
             "project_id": self.project_id,
             "dataset_id": self.dataset_id,
             "selected_classes": classes_json,
+            "selected_tags": tags_json,
             "reviewer_ids": reviewer_ids,
             "labeler_ids": labeler_ids,
         }
@@ -156,18 +162,43 @@ class WorkflowStep:
             f"Team ID: {self.team_id}, Workspace ID: {self.workspace_id}, "
             f"Project ID: {self.project_id}, Dataset ID: {self.dataset_id}"
         )
-        self.workspace_selector.set_ids(self.team_id, self.workspace_id)
+
+        # Set team and workspace
+        if self.team_id:
+            self.team_selector.set_team_id(self.team_id)
+        if self.workspace_id:
+            # self.workspace_selector.set_team_id(self.team_id)
+            # self.workspace_selector.set_workspace_id(self.workspace_id)
+            self.workspace_selector.set_ids(
+                team_id=self.team_id, workspace_id=self.workspace_id
+            )
+
+        # Set classes
         classes_json = data.get("selected_classes", [])
-        classes = [sly.ObjClass.from_json(cls_json) for cls_json in classes_json]
-        class_names = [cls.name for cls in classes]
-        self.class_selector.set(classes)
-        self.class_selector.set_value(class_names)
+        if classes_json:
+            classes = [sly.ObjClass.from_json(cls_json) for cls_json in classes_json]
+            class_names = [cls.name for cls in classes]
+            self.class_selector.set(classes)
+            self.class_selector.set_value(class_names)
+
+        # Set tags
+        tags_json = data.get("selected_tags", [])
+        if tags_json:
+            tags = [sly.TagMeta.from_json(tag_json) for tag_json in tags_json]
+            tag_names = [tag.name for tag in tags]
+            self.tag_selector.set(tags)
+            self.tag_selector.set_value(tag_names)
+
+        # Set reviewers and labelers
         reviewer_ids = data.get("reviewer_ids", [])
         labeler_ids = data.get("labeler_ids", [])
-        self.reviewer_selector.set_team_id(self.team_id)
-        self.labeler_selector.set_team_id(self.team_id)
-        self.reviewer_selector.set_selected_users_by_ids(reviewer_ids)
-        self.labeler_selector.set_selected_users_by_ids(labeler_ids)
+        if self.team_id:
+            self.reviewer_selector.set_team_id(self.team_id)
+            self.labeler_selector.set_team_id(self.team_id)
+        if reviewer_ids:
+            self.reviewer_selector.set_selected_users_by_ids(reviewer_ids)
+        if labeler_ids:
+            self.labeler_selector.set_selected_users_by_ids(labeler_ids)
 
     def _add_content(self) -> None:
         self.team_selector = SelectTeam(show_label=False)

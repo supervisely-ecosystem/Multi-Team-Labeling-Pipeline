@@ -16,21 +16,51 @@ from supervisely.app.widgets import (
     Flexbox,
     Empty,
     Modal,
+    ActivityFeed,
 )
 import src.globals as g
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 from supervisely.app.singleton import Singleton
 from supervisely.api.user_api import UserInfo
+from supervisely.api.labeling_queue_api import LabelingQueueInfo
+from supervisely.api.labeling_job_api import LabelingJobApi
 
 
 class WorkflowSettings(metaclass=Singleton):
     PROJECT_INFO: Optional[sly.ProjectInfo] = None
     DATASET_INFO: Optional[sly.DatasetInfo] = None
 
+    def get_project_name(self) -> Optional[str]:
+        if self.PROJECT_INFO:
+            return self.PROJECT_INFO.name
+        return None
+
+    def get_dataset_name(self) -> Optional[str]:
+        if self.DATASET_INFO:
+            return self.DATASET_INFO.name
+        return None
+
 
 MULTITEAM_LABELING_WORKFLOW_TITLE = "multi_team_labeling_workflow"
+MULTITEAM_LABELING_WORKFLOW_MARKER = "MTLWQ"
 
-workflow_modal = Modal("Workflow Overview")
+
+status_texts = {
+    step_number: Text("NO_INFO") for step_number in range(1, g.NUMBER_OF_TEAMS + 1)
+}
+
+feed_items = {
+    step_number: ActivityFeed.Item(
+        content=status_texts[step_number],
+        status="pending",
+        number=step_number,
+    )
+    for step_number in range(1, g.NUMBER_OF_TEAMS + 1)
+}
+
+activity_feed = ActivityFeed(items=list(feed_items.values()))
+
+workflow_modal = Modal("Workflow Overview", widgets=[activity_feed])
 
 select_project = SelectProject(
     default_id=g.PROJECT_ID, workspace_id=g.WORKSPACE_ID, compact=True
@@ -38,9 +68,7 @@ select_project = SelectProject(
 select_dataset = SelectDataset(
     default_id=g.DATASET_ID, project_id=g.PROJECT_ID, compact=True
 )
-if g.DATASET_ID:
-    sly.logger.info(f"Setting selected dataset ID: {g.DATASET_ID}")
-    select_dataset.set_dataset_id(g.DATASET_ID)
+
 
 save_workflow_button = Button(
     "",
@@ -89,6 +117,41 @@ def get_existing_workflow_config(project_id: int) -> Dict[int, Dict[str, Any]]:
 @launch_workflow_button.click
 def launch_workflow():
     sly.logger.info("Launching workflow...")
+    for step_number, (step_dataset_info, step_labeling_queue_info) in enumerate(
+        Workflow().all_steps_queues(), start=1
+    ):
+        sly.logger.info(
+            f"Workflow Step {step_number} - Dataset Info: {step_dataset_info}, "
+            f"Labeling Queue Info: {step_labeling_queue_info}"
+        )
+        if step_labeling_queue_info:
+            queue_status = step_labeling_queue_info.status
+            if queue_status == LabelingJobApi.Status.REVIEW_COMPLETED:
+                item_status = "completed"
+                # TODO: Think how handle when we're ready to move forward and create in this case.
+            else:
+                item_status = "in_progress"
+        else:
+            item_status = "pending"
+
+        dataset_id = str(step_dataset_info.id) if step_dataset_info else "N/A"
+        labeling_queue_id = (
+            str(step_labeling_queue_info.id) if step_labeling_queue_info else "N/A"
+        )
+        labeling_queue_status = (
+            step_labeling_queue_info.status if step_labeling_queue_info else "N/A"
+        )
+
+        summary_text = (
+            f"Dataset ID: {dataset_id} | "
+            f"Labeling Queue ID: {labeling_queue_id} | "
+            f"Labeling Queue Status: {labeling_queue_status}"
+        )
+
+        status_texts[step_number].text = summary_text
+
+        activity_feed.set_status(number=step_number, status=item_status)
+
     workflow_modal.show()
 
 
@@ -118,6 +181,10 @@ def save_workflow():
 
 @select_dataset.value_changed
 def on_dataset_change(dataset_id: int):
+    update_dataset(dataset_id)
+
+
+def update_dataset(dataset_id: int):
     sly.logger.info(f"Dataset changed to ID: {dataset_id}")
     if not dataset_id:
         sly.logger.warning("No dataset selected. Cannot load workflow.")
@@ -140,6 +207,9 @@ def on_dataset_change(dataset_id: int):
         Workflow().from_json(dataset_workflow_data)
     else:
         sly.logger.info("No existing workflow configuration for this dataset.")
+
+    if Workflow().all_steps_filled():
+        launch_workflow_button.enable()
 
 
 class WorkflowStep:
@@ -169,6 +239,78 @@ class WorkflowStep:
         if not self.labeler_selector.get_selected_user():
             return False
         return True
+
+    def is_dataset_exists(self) -> bool:
+        team_id = self.team_selector.get_selected_id()
+        if not team_id:
+            sly.logger.warning("Cannot check dataset existence: team ID is missing.")
+            return False
+
+        self.team_id = team_id
+
+        workspace_id = self.workspace_selector.get_selected_id()
+        project_name = WorkflowSettings().get_project_name()
+        if not workspace_id or not project_name:
+            sly.logger.warning(
+                "Cannot check dataset existence: workspace ID or project name is missing."
+            )
+            return False
+
+        self.workspace_id = workspace_id
+        project_info = g.api.project.get_info_by_name(workspace_id, project_name)
+        if not project_info:
+            sly.logger.info(
+                f"Project {project_name} does not exist in workspace ID {workspace_id}."
+            )
+            return False
+
+        self.project_id = project_info.id
+
+        dataset_name = WorkflowSettings().get_dataset_name()
+        if not dataset_name:
+            sly.logger.warning(
+                "Cannot check dataset existence: dataset name is missing."
+            )
+            return False
+        dataset_info = g.api.dataset.get_info_by_name(project_info.id, dataset_name)
+        if not dataset_info:
+            sly.logger.info(
+                f"Dataset {dataset_name} does not exist in project ID {project_info.id}."
+            )
+            return False
+
+        self.dataset_id = dataset_info.id
+
+        return True
+
+    def get_labeling_queue(self) -> Optional[LabelingQueueInfo]:
+        queue_infos = g.api.labeling_queue.get_list(
+            self.team_id, dataset_id=self.dataset_id
+        )
+        if not queue_infos:
+            sly.logger.info(
+                f"No labeling queues found for Dataset ID {self.dataset_id} in Team ID {self.team_id}."
+            )
+            return None
+
+        matching_queues = []
+        for queue_info in queue_infos:
+            if queue_info.dataset_id == self.dataset_id:
+                if MULTITEAM_LABELING_WORKFLOW_MARKER in queue_info.name:
+                    matching_queues.append(queue_info)
+
+        if not matching_queues:
+            sly.logger.info(
+                f"No labeling queue with marker found for Dataset ID {self.dataset_id}."
+            )
+            return None
+
+        if len(matching_queues) > 1:
+            raise RuntimeError(
+                f"Multiple labeling queues with marker found for Dataset ID {self.dataset_id}."
+            )
+
+        return matching_queues[0]
 
     def to_json(self) -> Dict[str, Any]:
         selected_classes = self.class_selector.get_selected_class() or []
@@ -366,6 +508,24 @@ class Workflow(metaclass=Singleton):
         launch_workflow_button.enable()
         return True
 
+    def all_steps_queues(
+        self,
+    ) -> List[Tuple[Optional[sly.DatasetInfo], Optional[LabelingQueueInfo]]]:
+        pairs = []
+        for step_number, workflow_step in self.steps.items():
+            dataset_exists = workflow_step.is_dataset_exists()
+            if not dataset_exists:
+                sly.logger.info(
+                    f"Workflow Step {step_number} dataset does not exist. Cannot get labeling queue."
+                )
+                pairs.append((None, None))
+                continue
+
+            dataset_info = g.api.dataset.get_info_by_id(workflow_step.dataset_id)
+            labeling_queue_info = workflow_step.get_labeling_queue()
+            pairs.append((dataset_info, labeling_queue_info))
+        return pairs
+
     def to_json(self) -> Dict[int, Dict[str, Any]]:
         data = {}
         for step_number, workflow_step in self.steps.items():
@@ -380,21 +540,27 @@ class Workflow(metaclass=Singleton):
                 sly.logger.info(f"Loading data for Workflow Step {step_number}")
                 self.steps[step_number].update_from_json(step_data)
 
-    @staticmethod
-    @reset_workflow_button.click
-    def reset_workflow():
-        sly.logger.info("Resetting workflow configuration.")
-        workflow = Workflow()
-        for step_number, workflow_step in workflow.steps.items():
-            sly.logger.info(f"Resetting Workflow Step {step_number}")
+    # @staticmethod
+    # @reset_workflow_button.click
+    # def reset_workflow():
+    #     sly.logger.info("Resetting workflow configuration.")
+    #     workflow = Workflow()
+    #     for step_number, workflow_step in workflow.steps.items():
+    #         sly.logger.info(f"Resetting Workflow Step {step_number}")
 
-            workflow_step.team_id = None
-            workflow_step.workspace_id = None
-            workflow_step.class_selector.set_value([])
-            workflow_step.tag_selector.set_value([])
-            workflow_step.reviewer_selector.set_value([])
-            workflow_step.labeler_selector.set_value([])
-        launch_workflow_button.disable()
+    #         workflow_step.team_id = None
+    #         workflow_step.workspace_id = None
+    #         workflow_step.class_selector.set_value([])
+    #         workflow_step.tag_selector.set_value([])
+    #         workflow_step.reviewer_selector.set_value([])
+    #         workflow_step.labeler_selector.set_value([])
+    #     launch_workflow_button.disable()
 
     def get_layout(self):
         return Container(widgets=[settings_card, self._layout])
+
+
+if g.DATASET_ID:
+    sly.logger.info(f"Setting selected dataset ID: {g.DATASET_ID}")
+    select_dataset.set_dataset_id(g.DATASET_ID)
+    update_dataset(g.DATASET_ID)

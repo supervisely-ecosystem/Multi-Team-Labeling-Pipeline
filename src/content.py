@@ -23,7 +23,7 @@ from typing import Optional, Dict, Any, List, Tuple
 from supervisely.app.singleton import Singleton
 from supervisely.api.user_api import UserInfo
 from supervisely.api.labeling_queue_api import LabelingQueueInfo
-from supervisely.api.labeling_job_api import LabelingJobApi
+from time import sleep
 
 
 class WorkflowSettings(metaclass=Singleton):
@@ -43,6 +43,7 @@ class WorkflowSettings(metaclass=Singleton):
 
 MULTITEAM_LABELING_WORKFLOW_TITLE = "multi_team_labeling_workflow"
 MULTITEAM_LABELING_WORKFLOW_MARKER = "MTLWQ"
+WAIT_TIME = 5  # seconds
 
 
 status_texts = {
@@ -117,32 +118,66 @@ def get_existing_workflow_config(project_id: int) -> Dict[int, Dict[str, Any]]:
 @launch_workflow_button.click
 def launch_workflow():
     sly.logger.info("Launching workflow...")
+
+    move_forward_needed = False
     for step_number, (step_dataset_info, step_labeling_queue_info) in enumerate(
         Workflow().all_steps_queues(), start=1
     ):
         sly.logger.info(
-            f"Workflow Step {step_number} - Dataset Info: {step_dataset_info}, "
-            f"Labeling Queue Info: {step_labeling_queue_info}"
+            f"Workflow Step {step_number} - Dataset ID: {step_dataset_info.id if step_dataset_info else 'N/A'}, "
+            f"Labeling Queue Name: {step_labeling_queue_info.name if step_labeling_queue_info else 'N/A'}"
+        )
+        sly.logger.info(
+            f"Workflow Step {step_number} - Needing to move forward: {move_forward_needed}"
         )
         if step_labeling_queue_info:
             queue_status = step_labeling_queue_info.status
-            if queue_status == LabelingJobApi.Status.REVIEW_COMPLETED:
+            sly.logger.info(
+                f"Workflow Step {step_number} labeling queue status: {queue_status}"
+            )
+            if queue_status == "completed":
                 item_status = "completed"
-                # TODO: Think how handle when we're ready to move forward and create in this case.
+                move_forward_needed = True
+                sly.logger.info(
+                    f"Workflow Step {step_number} labeling queue review completed. "
+                    "Setting move_forward_needed to True."
+                )
             else:
                 item_status = "in_progress"
+                move_forward_needed = False
+                sly.logger.info(
+                    f"Workflow Step {step_number} labeling queue is still in progress. "
+                    "Setting move_forward_needed to False."
+                )
         else:
             item_status = "pending"
 
             if step_dataset_info and step_number == 1:
+                sly.logger.info(
+                    f"Workflow Step {step_number} dataset exists. "
+                    "Creating labeling queue for the first team."
+                )
                 # Create labeling queue for the first team if it doesn't exist
                 queue_info = Workflow().steps[step_number].create_labeling_queue()
                 if queue_info:
                     sly.logger.info(
-                        f"Labeling queue created for Workflow Step {step_number}: {queue_info}"
+                        f"Labeling queue created for Workflow Step {step_number}."
                     )
                     step_labeling_queue_info = queue_info
                     item_status = "in_progress"
+            elif move_forward_needed:
+                queue_info = Workflow().steps[step_number].move_forward()
+                if queue_info:
+                    sly.logger.info(
+                        f"Moved forward and created labeling queue for Workflow Step {step_number}."
+                    )
+                    step_labeling_queue_info = queue_info
+                    item_status = "in_progress"
+                else:
+                    raise RuntimeError(
+                        f"Failed to move forward and create labeling queue for Workflow Step {step_number}."
+                    )
+                move_forward_needed = False
 
         dataset_id = str(step_dataset_info.id) if step_dataset_info else "N/A"
         labeling_queue_id = (
@@ -375,6 +410,68 @@ class WorkflowStep:
 
         sly.logger.info(
             f"Project meta updated successfully for project ID {self.project_id}."
+        )
+
+    def move_forward(self) -> Optional[LabelingQueueInfo]:
+        if not self.is_dataset_exists():
+            sly.logger.info(
+                "Dataset does not exist; copying dataset from previous step."
+            )
+            self.copy_dataset_from_previous_step()
+            sly.logger.info(
+                f"Waiting {WAIT_TIME} seconds for dataset to be available..."
+            )
+            sleep(WAIT_TIME)
+            sly.logger.info("Rechecking dataset existence...")
+
+        if not self.is_dataset_exists():
+            sly.logger.warning(
+                "Dataset still does not exist after attempting to copy from previous step."
+            )
+            return
+
+        queue_info = self.create_labeling_queue()
+        if queue_info:
+            sly.logger.info(
+                f"Labeling queue created for Workflow Step {self.step_number}: {queue_info}"
+            )
+            return queue_info
+        else:
+            sly.logger.warning(
+                f"Failed to create labeling queue for Workflow Step {self.step_number}."
+            )
+            return
+
+    def copy_dataset_from_previous_step(self) -> None:
+        if self.step_number <= 1:
+            sly.logger.info(
+                "This is the first workflow step; no previous step to copy dataset from."
+            )
+            return
+        previous_step = Workflow().steps.get(self.step_number - 1)
+        workspace_id = self.workspace_selector.get_selected_id()
+        if not previous_step or not workspace_id:
+            sly.logger.warning(
+                "Cannot copy dataset: previous step or current workspace ID is missing."
+            )
+            return
+
+        previous_project_id = previous_step.project_id
+        if not previous_project_id:
+            sly.logger.warning(
+                "Cannot copy dataset: previous step's project ID is missing."
+            )
+            return
+
+        dst_name = WorkflowSettings().get_project_name()
+
+        g.api.project.clone(
+            id=previous_project_id, dst_workspace_id=workspace_id, dst_name=dst_name
+        )
+
+        sly.logger.info(
+            f"Cloned project ID {previous_project_id} to workspace ID {workspace_id} "
+            f"with name {dst_name} for workflow step {self.step_number}."
         )
 
     @staticmethod

@@ -134,6 +134,16 @@ def launch_workflow():
         else:
             item_status = "pending"
 
+            if step_dataset_info and step_number == 1:
+                # Create labeling queue for the first team if it doesn't exist
+                queue_info = Workflow().steps[step_number].create_labeling_queue()
+                if queue_info:
+                    sly.logger.info(
+                        f"Labeling queue created for Workflow Step {step_number}: {queue_info}"
+                    )
+                    step_labeling_queue_info = queue_info
+                    item_status = "in_progress"
+
         dataset_id = str(step_dataset_info.id) if step_dataset_info else "N/A"
         labeling_queue_id = (
             str(step_labeling_queue_info.id) if step_labeling_queue_info else "N/A"
@@ -282,6 +292,100 @@ class WorkflowStep:
         self.dataset_id = dataset_info.id
 
         return True
+
+    def create_labeling_queue(self) -> Optional[LabelingQueueInfo]:
+        if not self.dataset_id:
+            sly.logger.warning("Cannot create labeling queue: dataset ID is missing.")
+            return None
+
+        self.update_project_meta()
+        sly.logger.info(
+            f"Meta updated, creating labeling queue for Dataset ID {self.dataset_id}."
+        )
+        queue_name = self.get_labeling_queue_name()
+
+        annotor_ids = [
+            user.id for user in self.labeler_selector.get_selected_user() or []
+        ]
+        reviewer_ids = [
+            user.id for user in self.reviewer_selector.get_selected_user() or []
+        ]
+
+        if not annotor_ids or not reviewer_ids:
+            sly.logger.warning(
+                "Cannot create labeling queue: annotator or reviewer IDs are missing."
+            )
+            return None
+
+        queue_id = g.api.labeling_queue.create(
+            name=queue_name,
+            user_ids=annotor_ids,
+            reviewer_ids=reviewer_ids,
+            dataset_id=self.dataset_id,
+            classes_to_label=[
+                sly_class.name
+                for sly_class in self.class_selector.get_selected_class() or []
+            ],
+            tags_to_label=[
+                tag.name for tag in self.tag_selector.get_selected_tag() or []
+            ],
+            # TODO: Labeler sees figures: Edit only own (add to SDK).
+        )
+        queue_info = g.api.labeling_queue.get_info_by_id(queue_id)
+
+        sly.logger.info(
+            f"Labeling queue {queue_name} created successfully for Dataset ID {self.dataset_id}."
+        )
+
+        return queue_info
+
+    def update_project_meta(self) -> None:
+        if not self.project_id:
+            sly.logger.warning("Cannot update project meta: project ID is missing.")
+            return
+
+        project_meta = sly.ProjectMeta.from_json(
+            g.api.project.get_meta(self.project_id)
+        )
+        sly.logger.info(
+            f"Updating project meta for project ID {self.project_id} in workflow step {self.step_number}."
+        )
+
+        selected_classes = self.class_selector.get_selected_class() or []
+        for sly_class in selected_classes:
+            if not project_meta.get_obj_class(sly_class.name):
+                sly.logger.info(f"Adding class {sly_class.name} to project meta.")
+                project_meta = project_meta.add_obj_class(sly_class)
+
+        sly.logger.info(
+            f"Added {len(selected_classes)} classes to project meta for project ID {self.project_id}."
+        )
+
+        selected_tags = self.tag_selector.get_selected_tag() or []
+        for tag in selected_tags:
+            if not project_meta.get_tag_meta(tag.name):
+                sly.logger.info(f"Adding tag {tag.name} to project meta.")
+                project_meta = project_meta.add_tag_meta(tag)
+
+        sly.logger.info(
+            f"Added {len(selected_tags)} tags to project meta for project ID {self.project_id}."
+        )
+
+        g.api.project.update_meta(self.project_id, project_meta.to_json())
+
+        sly.logger.info(
+            f"Project meta updated successfully for project ID {self.project_id}."
+        )
+
+    @staticmethod
+    def is_labeling_queue_from_app() -> bool:
+        pass
+
+    def get_labeling_queue_name(self) -> str:
+        return (
+            f"{MULTITEAM_LABELING_WORKFLOW_MARKER}_Dataset_{self.dataset_id}"
+            f"_Team_{self.team_id}_Step_{self.step_number}"
+        )
 
     def get_labeling_queue(self) -> Optional[LabelingQueueInfo]:
         queue_infos = g.api.labeling_queue.get_list(

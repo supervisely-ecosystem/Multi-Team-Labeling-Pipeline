@@ -115,87 +115,112 @@ def get_existing_workflow_config(project_id: int) -> Dict[int, Dict[str, Any]]:
     return existing_workflow_config
 
 
+def process_workflow_step(
+    step_number: int,
+    step_dataset_info: Optional[sly.DatasetInfo],
+    step_labeling_queue_info: Optional[LabelingQueueInfo],
+    move_forward_needed: bool,
+) -> Tuple[str, Optional[LabelingQueueInfo], bool]:
+    """Process a single workflow step and return its status.
+
+    Returns:
+        Tuple of (item_status, updated_queue_info, new_move_forward_flag)
+    """
+    sly.logger.info(
+        f"Step {step_number} - Dataset: {step_dataset_info.id if step_dataset_info else 'N/A'}, "
+        f"Queue: {step_labeling_queue_info.name if step_labeling_queue_info else 'N/A'}, "
+        f"Move forward: {move_forward_needed}"
+    )
+
+    # Handle existing labeling queue
+    if step_labeling_queue_info:
+        return handle_existing_queue(step_number, step_labeling_queue_info)
+
+    # Handle missing labeling queue
+    return handle_missing_queue(step_number, step_dataset_info, move_forward_needed)
+
+
+def handle_existing_queue(
+    step_number: int, queue_info: LabelingQueueInfo
+) -> Tuple[str, LabelingQueueInfo, bool]:
+    """Handle a step that already has a labeling queue."""
+    queue_status = queue_info.status
+    sly.logger.info(f"Step {step_number} queue status: {queue_status}")
+
+    if queue_status == "completed":
+        sly.logger.info(f"Step {step_number} completed - ready to move forward")
+        return "completed", queue_info, True
+    else:
+        sly.logger.info(f"Step {step_number} in progress - waiting")
+        return "in_progress", queue_info, False
+
+
+def handle_missing_queue(
+    step_number: int,
+    dataset_info: Optional[sly.DatasetInfo],
+    move_forward_needed: bool,
+) -> Tuple[str, Optional[LabelingQueueInfo], bool]:
+    """Handle a step that doesn't have a labeling queue yet."""
+    # First step with existing dataset
+    if dataset_info and step_number == 1:
+        sly.logger.info(f"Step {step_number} - creating initial queue")
+        queue_info = Workflow().steps[step_number].create_labeling_queue()
+        if queue_info:
+            sly.logger.info(f"Step {step_number} - queue created successfully")
+            return "in_progress", queue_info, False
+        return "pending", None, False
+
+    # Subsequent steps waiting for previous completion
+    if move_forward_needed:
+        sly.logger.info(f"Step {step_number} - moving forward from previous step")
+        queue_info = Workflow().steps[step_number].move_forward()
+        if queue_info:
+            sly.logger.info(f"Step {step_number} - moved forward successfully")
+            return "in_progress", queue_info, False
+        else:
+            raise RuntimeError(f"Failed to move forward for Step {step_number}")
+
+    return "pending", None, False
+
+
+def update_step_display(
+    step_number: int,
+    dataset_info: Optional[sly.DatasetInfo],
+    queue_info: Optional[LabelingQueueInfo],
+    item_status: str,
+) -> None:
+    """Update the UI display for a workflow step."""
+    dataset_id = str(dataset_info.id) if dataset_info else "N/A"
+    queue_id = str(queue_info.id) if queue_info else "N/A"
+    queue_status = queue_info.status if queue_info else "N/A"
+
+    summary_text = (
+        f"Dataset ID: {dataset_id} | "
+        f"Queue ID: {queue_id} | "
+        f"Status: {queue_status}"
+    )
+
+    status_texts[step_number].text = summary_text
+    activity_feed.set_status(number=step_number, status=item_status)
+
+
 @launch_workflow_button.click
 def launch_workflow():
+    """Launch and monitor the multi-team labeling workflow."""
     sly.logger.info("Launching workflow...")
 
     move_forward_needed = False
-    for step_number, (step_dataset_info, step_labeling_queue_info) in enumerate(
+
+    for step_number, (dataset_info, queue_info) in enumerate(
         Workflow().all_steps_queues(), start=1
     ):
-        sly.logger.info(
-            f"Workflow Step {step_number} - Dataset ID: {step_dataset_info.id if step_dataset_info else 'N/A'}, "
-            f"Labeling Queue Name: {step_labeling_queue_info.name if step_labeling_queue_info else 'N/A'}"
-        )
-        sly.logger.info(
-            f"Workflow Step {step_number} - Needing to move forward: {move_forward_needed}"
-        )
-        if step_labeling_queue_info:
-            queue_status = step_labeling_queue_info.status
-            sly.logger.info(
-                f"Workflow Step {step_number} labeling queue status: {queue_status}"
-            )
-            if queue_status == "completed":
-                item_status = "completed"
-                move_forward_needed = True
-                sly.logger.info(
-                    f"Workflow Step {step_number} labeling queue review completed. "
-                    "Setting move_forward_needed to True."
-                )
-            else:
-                item_status = "in_progress"
-                move_forward_needed = False
-                sly.logger.info(
-                    f"Workflow Step {step_number} labeling queue is still in progress. "
-                    "Setting move_forward_needed to False."
-                )
-        else:
-            item_status = "pending"
-
-            if step_dataset_info and step_number == 1:
-                sly.logger.info(
-                    f"Workflow Step {step_number} dataset exists. "
-                    "Creating labeling queue for the first team."
-                )
-                # Create labeling queue for the first team if it doesn't exist
-                queue_info = Workflow().steps[step_number].create_labeling_queue()
-                if queue_info:
-                    sly.logger.info(
-                        f"Labeling queue created for Workflow Step {step_number}."
-                    )
-                    step_labeling_queue_info = queue_info
-                    item_status = "in_progress"
-            elif move_forward_needed:
-                queue_info = Workflow().steps[step_number].move_forward()
-                if queue_info:
-                    sly.logger.info(
-                        f"Moved forward and created labeling queue for Workflow Step {step_number}."
-                    )
-                    step_labeling_queue_info = queue_info
-                    item_status = "in_progress"
-                else:
-                    raise RuntimeError(
-                        f"Failed to move forward and create labeling queue for Workflow Step {step_number}."
-                    )
-                move_forward_needed = False
-
-        dataset_id = str(step_dataset_info.id) if step_dataset_info else "N/A"
-        labeling_queue_id = (
-            str(step_labeling_queue_info.id) if step_labeling_queue_info else "N/A"
-        )
-        labeling_queue_status = (
-            step_labeling_queue_info.status if step_labeling_queue_info else "N/A"
+        item_status, updated_queue_info, move_forward_needed = process_workflow_step(
+            step_number, dataset_info, queue_info, move_forward_needed
         )
 
-        summary_text = (
-            f"Dataset ID: {dataset_id} | "
-            f"Labeling Queue ID: {labeling_queue_id} | "
-            f"Labeling Queue Status: {labeling_queue_status}"
+        update_step_display(
+            step_number, dataset_info, updated_queue_info or queue_info, item_status
         )
-
-        status_texts[step_number].text = summary_text
-
-        activity_feed.set_status(number=step_number, status=item_status)
 
     workflow_modal.show()
 

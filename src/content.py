@@ -626,15 +626,28 @@ class WorkflowStep:
         previous_project_meta_json = g.api.project.get_meta(previous_project_id)
         previous_project_meta = sly.ProjectMeta.from_json(previous_project_meta_json)
 
-        # Create new project in the target workspace with the same type and meta
-        new_project_info = g.api.project.create(
+        # Ensure that the project not exists before trying to create it
+        # by using get_or_create method.
+        new_project_info = g.api.project.get_or_create(
             workspace_id,
             dst_project_name,
         )
         new_project_id = new_project_info.id
+        sly.logger.info(
+            f"Created or found project ID {new_project_id} in workspace ID {workspace_id}."
+        )
 
         # Set the project meta (classes and tags)
         g.api.project.update_meta(new_project_id, previous_project_meta.to_json())
+        sly.logger.info(
+            f"Updated project meta for new project ID {new_project_id}. "
+            "Copying dataset now..."
+        )
+
+        sly.logger.debug(
+            f"Copying dataset {dst_dataset_name} to project ID {new_project_id} from "
+            f"previous project ID {previous_project_id} and dataset ID {previous_dataset_id}."
+        )
 
         # Copy the dataset to the new project
         new_dataset_info = g.api.dataset.copy(

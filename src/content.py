@@ -282,9 +282,9 @@ def update_step_display(
     item_status: str,
 ) -> None:
     """Update the UI display for a workflow step."""
-    dataset_id = str(dataset_info.id) if dataset_info else "N/A"
-    queue_id = str(queue_info.id) if queue_info else "N/A"
-    queue_status = queue_info.status if queue_info else "N/A"
+    dataset_id = str(dataset_info.id) if dataset_info else "pending"
+    queue_id = str(queue_info.id) if queue_info else "pending"
+    queue_status = queue_info.status if queue_info else "pending"
 
     summary_text = (
         f"Dataset ID: {dataset_id} | "

@@ -1,4 +1,9 @@
+<div align="center" markdown>
+<img src="https://github.com/supervisely-ecosystem/multi-team-labeling-pipeline/releases/download/v0.0.1/POSTER.png"/>
+
 # Multi-Team Labeling Workflow
+
+</div>
 
 ## Overview
 
@@ -29,10 +34,12 @@ You can launch the Multi-Team Labeling Workflow in three ways:
 
 1. **From Ecosystem** (Create new workflow):
 
-   - Navigate to the Ecosystem in your Supervisely instance
-   - Find "Multi-Team Labeling Workflow" app
-   - Click "Run" and specify the number of teams in the modal dialog
-   - Click "Run" to launch the app
+<img src="https://github.com/supervisely-ecosystem/multi-team-labeling-pipeline/releases/download/v0.0.1/2025-12-10_13-36.png"/><br><br>
+
+- Navigate to the Ecosystem in your Supervisely instance
+- Find "Multi-Team Labeling Workflow" app
+- Click "Run" and specify the number of teams in the modal dialog
+- Click "Run" to launch the app
 
 2. **From Project Context Menu** (Configure workflow for existing project):
 
@@ -51,6 +58,8 @@ You can launch the Multi-Team Labeling Workflow in three ways:
 
 In the **Settings** card at the top of the application:
 
+<img src="https://github.com/supervisely-ecosystem/multi-team-labeling-pipeline/releases/download/v0.0.1/screenshot-dev-internal-supervisely-com-apps-767-sessions-54154-1765368819686.png"/><br><br>
+
 1. **Select Project**: Choose the source project containing the data you want to label
 
 2. **Select Dataset**: Choose the specific dataset within the project to be labeled
@@ -62,6 +71,8 @@ In the **Settings** card at the top of the application:
 ### Step 3: Configure Each Team's Workflow Step
 
 For each team (from Team 1 to Team N), you need to configure:
+
+<img src="https://github.com/supervisely-ecosystem/multi-team-labeling-pipeline/releases/download/v0.0.1/screenshot-dev-internal-supervisely-com-apps-767-sessions-54154-1765368750789.png"/><br><br>
 
 #### 3.1 Team and Workspace
 
@@ -108,9 +119,12 @@ After configuring and saving the workflow:
 1. The **"Launch Workflow"** button will become enabled (it's disabled until all teams are fully configured)
 2. Click **"Launch Workflow"** to open the monitoring dashboard
 3. The Workflow Overview modal will appear, showing:
-   - All workflow steps (one per team)
-   - Current status of each step (pending, in progress, or completed)
-   - Real-time status updates
+
+<img src="https://github.com/supervisely-ecosystem/multi-team-labeling-pipeline/releases/download/v0.0.1/screenshot-localhost-8000-1765371552110.png"/><br><br>
+
+- All workflow steps (one per team)
+- Current status of each step (pending, in progress, or completed)
+- Real-time status updates
 
 ### Step 6: Monitor Workflow Progress
 
@@ -127,7 +141,7 @@ The Workflow Overview provides real-time monitoring:
 - This continues sequentially through all teams
 - No manual intervention is required between teams
 
-### Step 7: Reset or Update Workflow
+### Step 7: Reset or Restore Workflow
 
 You have two options with the reset/update button:
 

@@ -127,6 +127,8 @@ require_classes_checkbox = Checkbox(
 )
 require_tags_checkbox = Checkbox(content="Tags labeling is required", checked=True)
 
+require_quality_checkbox = Checkbox(content="Quality check is required", checked=True)
+
 
 @require_classes_checkbox.value_changed
 def on_require_classes_change(is_checked: bool):
@@ -137,6 +139,12 @@ def on_require_classes_change(is_checked: bool):
 @require_tags_checkbox.value_changed
 def on_require_tags_change(is_checked: bool):
     sly.logger.info(f"Require tags checkbox changed: {is_checked}")
+    Workflow().all_steps_filled()
+
+
+@require_quality_checkbox.value_changed
+def on_require_quality_change(is_checked: bool):
+    sly.logger.info(f"Require quality checkbox changed: {is_checked}")
     Workflow().all_steps_filled()
 
 
@@ -177,6 +185,7 @@ settings_card = Card(
             select_dataset,
             require_classes_checkbox,
             require_tags_checkbox,
+            require_quality_checkbox,
             workflow_modal,
         ]
     ),
@@ -373,6 +382,7 @@ def on_project_change(project_id: int):
         # Initialize user selectors with the team_id
         workflow_step_1.reviewer_selector.set_team_id(g.TEAM_ID)
         workflow_step_1.labeler_selector.set_team_id(g.TEAM_ID)
+        workflow_step_1.quality_check_selector.set_team_id(g.TEAM_ID)
 
         # Set classes from project meta
         if project_meta.obj_classes:
@@ -448,6 +458,11 @@ class WorkflowStep:
             return False
         if not self.labeler_selector.get_selected_user():
             return False
+        if (
+            not self.quality_check_selector.get_selected_user()
+            and require_quality_checkbox.is_checked()
+        ):
+            return False
         return True
 
     def is_dataset_exists(self) -> bool:
@@ -510,10 +525,13 @@ class WorkflowStep:
         reviewer_ids = [
             user.id for user in self.reviewer_selector.get_selected_user() or []
         ]
+        quality_check_ids = [
+            user.id for user in self.quality_check_selector.get_selected_user() or []
+        ]
 
-        if not annotor_ids or not reviewer_ids:
+        if not annotor_ids or not reviewer_ids or not quality_check_ids:
             sly.logger.warning(
-                "Cannot create labeling queue: annotator or reviewer IDs are missing."
+                "Cannot create labeling queue: annotator, reviewer, or quality check IDs are missing."
             )
             return None
 
@@ -529,6 +547,8 @@ class WorkflowStep:
             tags_to_label=[
                 tag.name for tag in self.tag_selector.get_selected_tag() or []
             ],
+            enable_quality_check=True,
+            quality_check_user_ids=quality_check_ids,
             # TODO: Labeler sees figures: Edit only own (add to SDK).
         )
         queue_info = g.api.labeling_queue.get_info_by_id(queue_id)
@@ -731,6 +751,9 @@ class WorkflowStep:
 
         reviewer_ids = [user.id for user in self.reviewer_selector.get_selected_user()]
         labeler_ids = [user.id for user in self.labeler_selector.get_selected_user()]
+        quality_check_ids = [
+            user.id for user in self.quality_check_selector.get_selected_user()
+        ]
 
         data = {
             "step_number": self.step_number,
@@ -786,13 +809,17 @@ class WorkflowStep:
         # Set reviewers and labelers
         reviewer_ids = data.get("reviewer_ids", [])
         labeler_ids = data.get("labeler_ids", [])
+        quality_check_ids = data.get("quality_check_ids", [])
         if self.team_id:
             self.reviewer_selector.set_team_id(self.team_id)
             self.labeler_selector.set_team_id(self.team_id)
+            self.quality_check_selector.set_team_id(self.team_id)
         if reviewer_ids:
             self.reviewer_selector.set_selected_users_by_ids(reviewer_ids)
         if labeler_ids:
             self.labeler_selector.set_selected_users_by_ids(labeler_ids)
+        if quality_check_ids:
+            self.quality_check_selector.set_selected_users_by_ids(quality_check_ids)
 
     def _add_content(self) -> None:
         self.team_selector = SelectTeam(show_label=False)
@@ -842,9 +869,16 @@ class WorkflowStep:
             self.labeler_selector,
             title="Labelers",
         )
+        self.quality_check_selector = SelectUser(
+            roles=["annotator", "reviewer"], multiple=True
+        )
+        quality_check_field = Field(
+            self.quality_check_selector,
+            title="Quality Check",
+        )
 
         users_container = Flexbox(
-            [reviewer_field, labeler_field],
+            [reviewer_field, labeler_field, quality_check_field],
         )
 
         @self.team_selector.value_changed
@@ -853,6 +887,7 @@ class WorkflowStep:
             self.workspace_selector.set_team_id(team_id)
             self.reviewer_selector.set_team_id(team_id)
             self.labeler_selector.set_team_id(team_id)
+            self.quality_check_selector.set_team_id(team_id)
             Workflow().all_steps_filled()
 
         @self.workspace_selector.value_changed
@@ -868,6 +903,7 @@ class WorkflowStep:
             self.tag_selector,
             self.reviewer_selector,
             self.labeler_selector,
+            self.quality_check_selector,
         ]
 
         for widget in checkable_widgets:
@@ -961,6 +997,7 @@ class Workflow(metaclass=Singleton):
             workflow_step.tag_selector.set_value([])
             workflow_step.reviewer_selector.set_value([])
             workflow_step.labeler_selector.set_value([])
+            workflow_step.quality_check_selector.set_value([])
         launch_workflow_button.disable()
 
     def get_layout(self):

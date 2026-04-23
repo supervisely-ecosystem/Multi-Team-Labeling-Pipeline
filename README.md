@@ -3,6 +3,11 @@
 
 # Multi-Team Labeling Workflow
 
+[![](https://img.shields.io/badge/slack-chat-green.svg?logo=slack)](https://supervisely.com/slack)
+![GitHub release (latest SemVer)](https://img.shields.io/github/v/release/supervisely-ecosystem/multi-team-labeling-pipeline)
+[![views](https://app.supervisely.com/img/badges/views/supervisely-ecosystem/multi-team-labeling-pipeline.png)](https://supervisely.com)
+[![downloads](https://app.supervisely.com/img/badges/downloads/supervisely-ecosystem/multi-team-labeling-pipeline.png)](https://supervisely.com)
+
 </div>
 
 ## Overview
